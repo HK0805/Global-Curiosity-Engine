@@ -1,0 +1,157 @@
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.1
+    container_name: gce-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: gce-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: gce-kafka-init
+    depends_on:
+      - kafka
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "
+      cub kafka-ready -b kafka:29092 1 30 &&
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic raw.wikipedia.edits --partitions 1 --replication-factor 1 &&
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic raw.reddit.posts --partitions 1 --replication-factor 1 &&
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic raw.hn.stories --partitions 1 --replication-factor 1 &&
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic raw.github.events --partitions 1 --replication-factor 1 &&
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic raw.gdelt.events --partitions 1 --replication-factor 1 &&
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic normalized.events --partitions 1 --replication-factor 1
+      "
+    restart: "no"
+
+  wiki-producer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: services/wiki-producer
+        BINARY_NAME: wiki-producer
+    container_name: gce-wiki-producer
+    env_file:
+      - .env
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  reddit-producer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: services/reddit-producer
+        BINARY_NAME: reddit-producer
+    container_name: gce-reddit-producer
+    env_file:
+      - .env
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  hn-producer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: services/hn-producer
+        BINARY_NAME: hn-producer
+    container_name: gce-hn-producer
+    env_file:
+      - .env
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  github-producer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: services/github-producer
+        BINARY_NAME: github-producer
+    container_name: gce-github-producer
+    env_file:
+      - .env
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  gdelt-poller:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: services/gdelt-poller
+        BINARY_NAME: gdelt-poller
+    container_name: gce-gdelt-poller
+    env_file:
+      - .env
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  event-normalizer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: processors/event-normalizer
+        BINARY_NAME: event-normalizer
+    container_name: gce-event-normalizer
+    env_file:
+      - .env
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./database:/data
+    restart: unless-stopped
+
+  api-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: api/server
+        BINARY_NAME: api-server
+    container_name: gce-api-server
+    env_file:
+      - .env
+    depends_on:
+      - kafka-init
+    volumes:
+      - ./database:/data
+    ports:
+      - "${API_PORT:-8080}:${API_PORT:-8080}"
+    restart: unless-stopped
