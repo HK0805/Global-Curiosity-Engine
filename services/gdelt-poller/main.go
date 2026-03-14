@@ -148,20 +148,17 @@ func (p *gdeltPoller) pollOnce(ctx context.Context) error {
 		return fmt.Errorf("read gdelt response: %w", err)
 	}
 
+	trimmed := strings.TrimSpace(string(body))
+	if throttleMessage, ok := gdeltThrottleMessage(resp.StatusCode, trimmed); ok {
+		return fmt.Errorf("gdelt rate limited: %s", throttleMessage)
+	}
+
 	if resp.StatusCode != http.StatusOK {
-		trimmed := strings.TrimSpace(string(body))
-		if resp.StatusCode == http.StatusTooManyRequests || strings.Contains(strings.ToLower(trimmed), "limit requests") {
-			return fmt.Errorf("gdelt rate limited: %s", trimmed)
-		}
 		return fmt.Errorf("gdelt returned status %s: %s", resp.Status, trimmed)
 	}
 
-	trimmed := strings.TrimSpace(string(body))
 	if trimmed == "" {
 		return nil
-	}
-	if strings.Contains(strings.ToLower(trimmed), "limit requests") {
-		return fmt.Errorf("gdelt rate limited: %s", trimmed)
 	}
 
 	var payload gdeltResponse
@@ -220,6 +217,22 @@ func gdeltItemID(raw json.RawMessage) (string, error) {
 	default:
 		return "", nil
 	}
+}
+
+func gdeltThrottleMessage(statusCode int, body string) (string, bool) {
+	if body == "" {
+		return "", false
+	}
+
+	lowerBody := strings.ToLower(body)
+	if statusCode == http.StatusTooManyRequests ||
+		strings.Contains(lowerBody, "please limit requests") ||
+		strings.Contains(lowerBody, "too many requests") ||
+		strings.Contains(lowerBody, "rate limit") {
+		return body, true
+	}
+
+	return "", false
 }
 
 type recentGDELTIDSet struct {

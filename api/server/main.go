@@ -42,6 +42,9 @@ func main() {
 	mux.HandleFunc("GET /health", handler.handleHealth)
 	mux.HandleFunc("GET /events", handler.handleEvents)
 	mux.HandleFunc("GET /sources", handler.handleSources)
+	mux.HandleFunc("GET /topics/trending", handler.handleTrendingTopics)
+	mux.HandleFunc("GET /topics/spikes", handler.handleTopicSpikes)
+	mux.HandleFunc("GET /curiosity/index", handler.handleCuriosityIndex)
 
 	server := &http.Server{
 		Addr:              ":" + cfg.APIPort,
@@ -59,7 +62,15 @@ func main() {
 		}
 	}()
 
-	logger.Info("service ready", "health_endpoint", "/health", "events_endpoint", "/events", "sources_endpoint", "/sources")
+	logger.Info(
+		"service ready",
+		"health_endpoint", "/health",
+		"events_endpoint", "/events",
+		"sources_endpoint", "/sources",
+		"trending_topics_endpoint", "/topics/trending",
+		"topic_spikes_endpoint", "/topics/spikes",
+		"curiosity_index_endpoint", "/curiosity/index",
+	)
 
 	<-ctx.Done()
 	logger.Info("service shutting down")
@@ -135,6 +146,71 @@ func (h *apiHandler) handleSources(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, counts)
+}
+
+func (h *apiHandler) handleTrendingTopics(w http.ResponseWriter, r *http.Request) {
+	limit, err := parsePhase2Limit(r.URL.Query().Get("limit"), 20)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	scores, err := h.store.ListTrendingTopicScores(ctx, limit)
+	if err != nil {
+		h.logger.Error("failed to query trending topics", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to query trending topics")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, scores)
+}
+
+func (h *apiHandler) handleTopicSpikes(w http.ResponseWriter, r *http.Request) {
+	limit, err := parsePhase2Limit(r.URL.Query().Get("limit"), 20)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	spikes, err := h.store.ListTopicSpikes(ctx, limit)
+	if err != nil {
+		h.logger.Error("failed to query topic spikes", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to query topic spikes")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, spikes)
+}
+
+func (h *apiHandler) handleCuriosityIndex(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	index, topicsConsidered, err := h.store.CuriosityIndex(ctx, 10)
+	if err != nil {
+		h.logger.Error("failed to compute curiosity index", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to compute curiosity index")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"curiosity_index":   index,
+		"topics_considered": topicsConsidered,
+		"generated_at":      time.Now().UTC(),
+	})
+}
+
+func parsePhase2Limit(raw string, fallback int) (int, error) {
+	if raw == "" {
+		return fallback, nil
+	}
+	return parseLimit(raw)
 }
 
 func parseLimit(raw string) (int, error) {
