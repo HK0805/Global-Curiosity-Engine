@@ -35,15 +35,17 @@ services:
       - kafka
     entrypoint: ["/bin/sh", "-c"]
     command: >
-      "
       cub kafka-ready -b kafka:29092 1 30 &&
       kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic raw.wikipedia.edits --partitions 1 --replication-factor 1 &&
       kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic raw.reddit.posts --partitions 1 --replication-factor 1 &&
       kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic raw.hn.stories --partitions 1 --replication-factor 1 &&
       kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic raw.github.events --partitions 1 --replication-factor 1 &&
       kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic raw.gdelt.events --partitions 1 --replication-factor 1 &&
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic normalized.events --partitions 1 --replication-factor 1
-      "
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic normalized.events --partitions 1 --replication-factor 1 &&
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic topics.extracted --partitions 1 --replication-factor 1 &&
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic topics.metrics --partitions 1 --replication-factor 1 &&
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic topics.scored --partitions 1 --replication-factor 1 &&
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic topics.spikes --partitions 1 --replication-factor 1
     restart: "no"
 
   wiki-producer:
@@ -56,6 +58,8 @@ services:
     container_name: gce-wiki-producer
     env_file:
       - .env
+    environment:
+      KAFKA_BROKER: kafka:29092
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -71,6 +75,8 @@ services:
     container_name: gce-reddit-producer
     env_file:
       - .env
+    environment:
+      KAFKA_BROKER: kafka:29092
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -86,6 +92,8 @@ services:
     container_name: gce-hn-producer
     env_file:
       - .env
+    environment:
+      KAFKA_BROKER: kafka:29092
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -101,6 +109,8 @@ services:
     container_name: gce-github-producer
     env_file:
       - .env
+    environment:
+      KAFKA_BROKER: kafka:29092
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -116,6 +126,8 @@ services:
     container_name: gce-gdelt-poller
     env_file:
       - .env
+    environment:
+      KAFKA_BROKER: kafka:29092
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -131,6 +143,86 @@ services:
     container_name: gce-event-normalizer
     env_file:
       - .env
+    environment:
+      KAFKA_BROKER: kafka:29092
+      SQLITE_PATH: /data/curiosity.db
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./database:/data
+    restart: unless-stopped
+
+  topic-extractor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: processors/topic-extractor
+        BINARY_NAME: topic-extractor
+    container_name: gce-topic-extractor
+    env_file:
+      - .env
+    environment:
+      KAFKA_BROKER: kafka:29092
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  topic-aggregator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: processors/topic-aggregator
+        BINARY_NAME: topic-aggregator
+    container_name: gce-topic-aggregator
+    env_file:
+      - .env
+    environment:
+      KAFKA_BROKER: kafka:29092
+      SQLITE_PATH: /data/curiosity.db
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./database:/data
+    restart: unless-stopped
+
+  curiosity-scorer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: processors/curiosity-scorer
+        BINARY_NAME: curiosity-scorer
+    container_name: gce-curiosity-scorer
+    env_file:
+      - .env
+    environment:
+      KAFKA_BROKER: kafka:29092
+      SQLITE_PATH: /data/curiosity.db
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./database:/data
+    restart: unless-stopped
+
+  spike-detector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: processors/spike-detector
+        BINARY_NAME: spike-detector
+    container_name: gce-spike-detector
+    env_file:
+      - .env
+    environment:
+      KAFKA_BROKER: kafka:29092
+      SQLITE_PATH: /data/curiosity.db
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -148,6 +240,8 @@ services:
     container_name: gce-api-server
     env_file:
       - .env
+    environment:
+      SQLITE_PATH: /data/curiosity.db
     depends_on:
       - kafka-init
     volumes:
