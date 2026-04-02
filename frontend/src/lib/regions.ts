@@ -7,7 +7,9 @@ import type {
   RegionEvent,
   RegionInsight,
   RegionSpike,
+  RegionSourceView,
   RegionTopic,
+  SourceViewKey,
   SourceBreakdown,
   SourceCount,
   TopicScore,
@@ -18,6 +20,15 @@ import type {
 const DEFAULT_SOURCE_WEIGHT = 1;
 const TREND_BUCKETS = 7;
 const TREND_WINDOW_MINUTES = 42;
+
+export const SOURCE_VIEW_OPTIONS: Array<{ key: SourceViewKey; label: string; shortLabel: string }> = [
+  { key: "overview", label: "Overview", shortLabel: "All" },
+  { key: "wikipedia", label: "Wikipedia", shortLabel: "Wiki" },
+  { key: "reddit", label: "Reddit", shortLabel: "Reddit" },
+  { key: "hackernews", label: "Hacker News", shortLabel: "HN" },
+  { key: "github", label: "GitHub", shortLabel: "GitHub" },
+  { key: "gdelt", label: "News", shortLabel: "News" },
+];
 
 export const REGION_DEFINITIONS: RegionDefinition[] = [
   {
@@ -110,11 +121,13 @@ type RegionAssignment = {
 type TopicCandidate = {
   topic: TopicScore;
   assignment: RegionAssignment;
+  dominantSource: SourceViewKey;
 };
 
 type SpikeCandidate = {
   spike: TopicSpike;
   assignment: RegionAssignment;
+  dominantSource: SourceViewKey;
 };
 
 type EventCandidate = {
@@ -133,10 +146,12 @@ export function buildDashboardState(input: {
   const topicCandidates = input.trending.map((topic) => ({
     topic,
     assignment: assignTopicToRegion(topic),
+    dominantSource: normalizeSourceKey(topic.metadata?.source_breakdown?.[0]?.source),
   }));
   const spikeCandidates = input.spikes.map((spike) => ({
     spike,
     assignment: assignSpikeToRegion(spike),
+    dominantSource: normalizeSourceKey(""),
   }));
   const eventCandidates = input.events.map((event) => ({
     event,
@@ -170,22 +185,19 @@ function buildRegionInsight(
   globalSources: SourceCount[],
   curiosityIndex: CuriosityIndex | null,
 ): RegionInsight {
-  const regionTopics = topicCandidates
+  const regionTopicCandidates = topicCandidates
     .filter((candidate) => candidate.assignment.regionIndex === regionIndex)
-    .sort((left, right) => regionTopicStrength(right) - regionTopicStrength(left))
-    .slice(0, 5);
+    .sort((left, right) => regionTopicStrength(right) - regionTopicStrength(left));
 
-  const regionSpikes = spikeCandidates
+  const regionSpikeCandidates = spikeCandidates
     .filter((candidate) => candidate.assignment.regionIndex === regionIndex)
-    .sort((left, right) => right.spike.current_score - left.spike.current_score)
-    .slice(0, 4);
+    .sort((left, right) => right.spike.current_score - left.spike.current_score);
 
-  const regionFeed = eventCandidates
+  const regionEventCandidates = eventCandidates
     .filter((candidate) => candidate.assignment.regionIndex === regionIndex)
-    .sort((left, right) => toMillis(right.event.timestamp) - toMillis(left.event.timestamp))
-    .slice(0, 6);
+    .sort((left, right) => toMillis(right.event.timestamp) - toMillis(left.event.timestamp));
 
-  const topTopics = regionTopics.map<RegionTopic>((candidate) => {
+  const allTopics = regionTopicCandidates.map<RegionTopic>((candidate) => {
     const sourceBreakdown = candidate.topic.metadata?.source_breakdown ?? [];
     const dominantSource = sourceBreakdown[0]?.source ?? "mixed";
     return {
@@ -194,33 +206,36 @@ function buildRegionInsight(
       mentions: candidate.topic.total_mentions,
       sources: candidate.topic.distinct_sources,
       sourceLead: dominantSource,
-      signalLabel: describeTopicSignal(candidate.topic, regionSpikes.some((item) => item.spike.topic === candidate.topic.topic)),
+      signalLabel: describeTopicSignal(candidate.topic, regionSpikeCandidates.some((item) => item.spike.topic === candidate.topic.topic)),
     };
   });
+  const topTopics = allTopics.slice(0, 5);
 
-  const spikes = regionSpikes.map<RegionSpike>((candidate) => {
-    const matchingTopic = regionTopics.find((topic) => topic.topic.topic === candidate.spike.topic);
+  const allSpikes = regionSpikeCandidates.map<RegionSpike>((candidate) => {
+    const matchingTopic = regionTopicCandidates.find((topic) => topic.topic.topic === candidate.spike.topic);
     return {
       id: candidate.spike.id,
       topic: candidate.spike.topic,
       spikeType: candidate.spike.spike_type,
       currentScore: Number((candidate.spike.current_score * candidate.assignment.score).toFixed(2)),
       timestamp: candidate.spike.timestamp,
-      sourceLead: matchingTopic?.topic.metadata?.source_breakdown?.[0]?.source ?? "mixed",
+      sourceLead: matchingTopic?.dominantSource ?? matchingTopic?.topic.metadata?.source_breakdown?.[0]?.source ?? "mixed",
     };
   });
+  const spikes = allSpikes.slice(0, 4);
 
-  const feed = regionFeed.map<RegionEvent>((candidate) => ({
+  const allFeed = regionEventCandidates.map<RegionEvent>((candidate) => ({
     id: candidate.event.id,
     title: candidate.event.title,
     source: candidate.event.source,
     timestamp: candidate.event.timestamp,
     url: candidate.event.url,
   }));
+  const feed = allFeed.slice(0, 6);
 
-  const contributions = buildContributions(region, regionTopics, regionFeed, globalSources);
+  const contributions = buildContributions(region, regionTopicCandidates, regionEventCandidates, globalSources);
   const spikePressure = Number(
-    regionSpikes.reduce((sum, candidate) => sum + candidate.spike.current_score * candidate.assignment.score, 0).toFixed(2),
+    regionSpikeCandidates.reduce((sum, candidate) => sum + candidate.spike.current_score * candidate.assignment.score, 0).toFixed(2),
   );
   const activity = Math.round(
     topTopics.reduce((sum, topic) => sum + topic.mentions, 0) +
@@ -237,16 +252,26 @@ function buildRegionInsight(
     ).toFixed(2),
   );
 
-  const hotspotLabel = topTopics[0]?.topic ?? deriveFallbackHotspot(regionFeed, regionSpikes, region.label);
+  const hotspotLabel = topTopics[0]?.topic ?? deriveFallbackHotspot(regionEventCandidates, regionSpikeCandidates, region.label);
   const dominantSource = contributions[0]?.source ?? "mixed";
   const topicDiversity = new Set(topTopics.map((topic) => topic.topic)).size;
+  const narrative = buildNarrative(region, topTopics, spikes, dominantSource, feed);
+  const sourceViews = buildSourceViews(
+    region,
+    allTopics,
+    allSpikes,
+    allFeed,
+    contributions,
+    curiosityIndex,
+    narrative,
+  );
 
   return {
     region,
     score,
     activity,
     hotspotLabel,
-    narrative: buildNarrative(region, topTopics, spikes, dominantSource, feed),
+    narrative,
     dominantSource,
     topicDiversity,
     spikePressure,
@@ -254,8 +279,87 @@ function buildRegionInsight(
     spikes,
     feed,
     contributions,
-    trend: buildTrend(regionTopics, regionSpikes, regionFeed, curiosityIndex),
+    trend: buildTrend(regionTopicCandidates, regionSpikeCandidates, regionEventCandidates, curiosityIndex),
+    sourceViews,
   };
+}
+
+function buildSourceViews(
+  region: RegionDefinition,
+  topTopics: RegionTopic[],
+  spikes: RegionSpike[],
+  feed: RegionEvent[],
+  contributions: RegionContribution[],
+  curiosityIndex: CuriosityIndex | null,
+  overviewNarrative: string,
+): Record<SourceViewKey, RegionSourceView> {
+  const groupedTopics = groupBySource(topTopics, (item) => normalizeSourceKey(item.sourceLead));
+  const groupedSpikes = groupBySource(spikes, (item) => normalizeSourceKey(item.sourceLead));
+  const groupedFeed = groupBySource(feed, (item) => normalizeSourceKey(item.source));
+  const groupedContributions = groupBySource(contributions, (item) => normalizeSourceKey(item.source));
+
+  return SOURCE_VIEW_OPTIONS.reduce<Record<SourceViewKey, RegionSourceView>>((accumulator, option) => {
+    if (option.key === "overview") {
+      accumulator[option.key] = {
+        key: option.key,
+        label: option.label,
+        narrative: buildSourceNarrative(option.label, overviewNarrative, dominantSourceFromContributions(contributions)),
+        score: Number(
+          (
+            topTopics.reduce((sum, item) => sum + item.score, 0) * 0.95 +
+            spikes.reduce((sum, item) => sum + item.currentScore, 0) * 0.2
+          ).toFixed(2),
+        ),
+        activity: Math.round(topTopics.reduce((sum, item) => sum + item.mentions, 0) + feed.length * 2 + spikes.length * 6),
+        topTopics: topTopics.slice(0, 5),
+        spikes: spikes.slice(0, 4),
+        feed: feed.slice(0, 6),
+        contributions,
+        trend: buildSourceTrend(topTopics, spikes, feed, curiosityIndex, undefined),
+        dominantSource: dominantSourceFromContributions(contributions),
+        hotspotLabel: topTopics[0]?.topic ?? region.label,
+        spikePressure: Number(spikes.reduce((sum, item) => sum + item.currentScore, 0).toFixed(2)),
+        topicDiversity: new Set(topTopics.map((item) => item.topic)).size,
+        hasSignal: topTopics.length > 0 || spikes.length > 0 || feed.length > 0,
+      };
+      return accumulator;
+    }
+
+    const sourceTopics = groupedTopics[option.key] ?? [];
+    const sourceSpikes = groupedSpikes[option.key] ?? [];
+    const sourceFeed = groupedFeed[option.key] ?? [];
+    const sourceContributions = (groupedContributions[option.key] ?? []).sort((left, right) => right.value - left.value);
+    const dominantSource = sourceContributions[0]?.source ?? option.key;
+
+    accumulator[option.key] = {
+      key: option.key,
+      label: option.label,
+      narrative: buildSourceNarrative(
+        option.label,
+        buildSourceSpecificNarrative(region.label, option.label, sourceTopics, sourceSpikes, sourceFeed),
+        dominantSource,
+      ),
+      score: Number(
+        (
+          sourceTopics.reduce((sum, item) => sum + item.score, 0) +
+          sourceSpikes.reduce((sum, item) => sum + item.currentScore, 0) * 0.25 +
+          sourceFeed.length * 0.4
+        ).toFixed(2),
+      ),
+      activity: Math.round(sourceTopics.reduce((sum, item) => sum + item.mentions, 0) + sourceFeed.length * 2 + sourceSpikes.length * 6),
+      topTopics: sourceTopics.slice(0, 5),
+      spikes: sourceSpikes.slice(0, 4),
+      feed: sourceFeed.slice(0, 6),
+      contributions: sourceContributions,
+      trend: buildSourceTrend(sourceTopics, sourceSpikes, sourceFeed, curiosityIndex, option.key),
+      dominantSource,
+      hotspotLabel: sourceTopics[0]?.topic ?? sourceFeed[0]?.title.split(/\s+/)[0] ?? option.label,
+      spikePressure: Number(sourceSpikes.reduce((sum, item) => sum + item.currentScore, 0).toFixed(2)),
+      topicDiversity: new Set(sourceTopics.map((item) => item.topic)).size,
+      hasSignal: sourceTopics.length > 0 || sourceSpikes.length > 0 || sourceFeed.length > 0,
+    };
+    return accumulator;
+  }, {} as Record<SourceViewKey, RegionSourceView>);
 }
 
 function buildContributions(
@@ -331,6 +435,41 @@ function buildTrend(
   return buckets.map((bucket, index) => ({
     label: index === TREND_BUCKETS - 1 ? "now" : bucket.label,
     value: Number(Math.max(0.8, bucket.value + (curiosityIndex?.curiosity_index ?? 0) * 0.01).toFixed(2)),
+  }));
+}
+
+function buildSourceTrend(
+  topics: RegionTopic[],
+  spikes: RegionSpike[],
+  feed: RegionEvent[],
+  curiosityIndex: CuriosityIndex | null,
+  sourceKey: SourceViewKey | undefined,
+): TrendPoint[] {
+  const now = Date.now();
+  const bucketWidthMs = (TREND_WINDOW_MINUTES / TREND_BUCKETS) * 60 * 1000;
+  const buckets = Array.from({ length: TREND_BUCKETS }, (_, index) => ({
+    label: `${(TREND_BUCKETS - index - 1) * 6}m`,
+    value: 0,
+  }));
+
+  topics.forEach((topic, index) => {
+    const pseudoTime = new Date(now - index * 5 * 60 * 1000).toISOString();
+    const sourceBoost = sourceKey && topic.sourceLead === sourceKey ? 1.1 : 1;
+    accumulateBucket(buckets, now, pseudoTime, bucketWidthMs, topic.score * 0.55 * sourceBoost);
+  });
+
+  spikes.forEach((spike) => {
+    const sourceBoost = sourceKey && normalizeSourceKey(spike.sourceLead) === sourceKey ? 1.12 : 1;
+    accumulateBucket(buckets, now, spike.timestamp, bucketWidthMs, spike.currentScore * 0.42 * sourceBoost);
+  });
+
+  feed.forEach((event) => {
+    accumulateBucket(buckets, now, event.timestamp, bucketWidthMs, 1.15);
+  });
+
+  return buckets.map((bucket, index) => ({
+    label: index === TREND_BUCKETS - 1 ? "now" : bucket.label,
+    value: Number(Math.max(0.8, bucket.value + (curiosityIndex?.curiosity_index ?? 0) * 0.008).toFixed(2)),
   }));
 }
 
@@ -451,12 +590,21 @@ function buildNarrative(
   return region.summary;
 }
 
-function deriveFallbackHotspot(events: EventCandidate[], spikes: SpikeCandidate[], fallback: string): string {
-  if (spikes[0]?.spike.topic) {
-    return spikes[0].spike.topic;
+function deriveFallbackHotspot(events: EventCandidate[] | RegionEvent[], spikes: SpikeCandidate[] | RegionSpike[], fallback: string): string {
+  const firstSpike = spikes[0];
+  if (firstSpike && "spike" in firstSpike && firstSpike.spike.topic) {
+    return firstSpike.spike.topic;
   }
-  if (events[0]?.event.title) {
-    return events[0].event.title.split(/\s+/)[0] ?? fallback;
+  if (firstSpike && "topic" in firstSpike && typeof firstSpike.topic === "string") {
+    return firstSpike.topic;
+  }
+
+  const firstEvent = events[0];
+  if (firstEvent && "event" in firstEvent && firstEvent.event.title) {
+    return firstEvent.event.title.split(/\s+/)[0] ?? fallback;
+  }
+  if (firstEvent && "title" in firstEvent && typeof firstEvent.title === "string") {
+    return firstEvent.title.split(/\s+/)[0] ?? fallback;
   }
   return fallback;
 }
@@ -472,6 +620,66 @@ function describeTopicSignal(topic: TopicScore, hasSpike: boolean): string {
     return "high-volume";
   }
   return "building";
+}
+
+function buildSourceSpecificNarrative(
+  regionLabel: string,
+  sourceLabel: string,
+  topics: RegionTopic[],
+  spikes: RegionSpike[],
+  feed: RegionEvent[],
+): string {
+  if (topics[0] && spikes[0]) {
+    return `${sourceLabel} is pushing ${capitalize(topics[0].topic)} while ${capitalize(
+      spikes[0].topic,
+    )} is accelerating fastest in ${regionLabel}.`;
+  }
+  if (topics[0]) {
+    return `${sourceLabel} is centering ${capitalize(topics[0].topic)} in ${regionLabel}, with the latest live items reinforcing that thread.`;
+  }
+  if (feed[0]) {
+    return `${sourceLabel} is active in ${regionLabel}, but its signals are still scattered across the latest event flow.`;
+  }
+  return `${sourceLabel} is not contributing strongly enough in ${regionLabel} yet to dominate the regional picture.`;
+}
+
+function buildSourceNarrative(sourceLabel: string, sentence: string, dominantSource: string): string {
+  if (sourceLabel === "Overview") {
+    return sentence;
+  }
+  return `${sentence} This view isolates ${sourceLabel} so its contribution is easier to read against the broader mix led by ${dominantSource}.`;
+}
+
+function dominantSourceFromContributions(contributions: RegionContribution[]): string {
+  return contributions[0]?.source ?? "mixed";
+}
+
+function groupBySource<T>(items: T[], keySelector: (item: T) => SourceViewKey): Partial<Record<SourceViewKey, T[]>> {
+  return items.reduce<Partial<Record<SourceViewKey, T[]>>>((accumulator, item) => {
+    const key = keySelector(item);
+    accumulator[key] = [...(accumulator[key] ?? []), item];
+    return accumulator;
+  }, {});
+}
+
+function normalizeSourceKey(value: string | undefined): SourceViewKey {
+  switch ((value ?? "").toLowerCase()) {
+    case "wikipedia":
+      return "wikipedia";
+    case "reddit":
+      return "reddit";
+    case "hackernews":
+    case "hacker news":
+    case "hn":
+      return "hackernews";
+    case "github":
+      return "github";
+    case "gdelt":
+    case "news":
+      return "gdelt";
+    default:
+      return "overview";
+  }
 }
 
 function tokenize(value: string): string[] {

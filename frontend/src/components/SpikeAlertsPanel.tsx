@@ -2,23 +2,33 @@ import { AlertTriangle } from "lucide-react";
 import { formatRelativeTime, formatScore, toTitleCase } from "../lib/format";
 import { PanelState } from "./PanelState";
 import { SectionCard } from "./SectionCard";
-import type { RegionInsight } from "../types";
+import type { RegionInsight, RegionSourceView, SourceViewKey } from "../types";
 
 type SpikeAlertsPanelProps = {
   region: RegionInsight | null;
+  view?: RegionSourceView | null;
+  selectedSourceView?: SourceViewKey;
   isLoading?: boolean;
 };
 
-export function SpikeAlertsPanel({ region, isLoading = false }: SpikeAlertsPanelProps) {
+export function SpikeAlertsPanel({
+  region,
+  view,
+  selectedSourceView = "overview",
+  isLoading = false,
+}: SpikeAlertsPanelProps) {
+  const activeView = view ?? region?.sourceViews.overview ?? null;
+  const viewLabel = selectedSourceView === "overview" ? "All signals" : activeView?.label ?? "Selected source";
+
   return (
     <SectionCard title="Spike Alerts" eyebrow="Escalation Queue" tone="amber" className="h-full">
-      {region ? (
+      {region && activeView ? (
         <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-amber/15 bg-amber/10 px-4 py-3 text-sm text-amber-100/90">
-          <span>Regional spike pressure</span>
-          <span className="font-display text-lg font-semibold">{formatScore(region.spikePressure)}</span>
+          <span>{viewLabel} spike pressure</span>
+          <span className="font-display text-lg font-semibold">{formatScore(activeView.spikePressure)}</span>
         </div>
       ) : null}
-      <div className="space-y-3">
+      <div className="space-y-3" data-panel-source={selectedSourceView} data-panel-kind="spike-alerts">
         {isLoading && !region ? (
           <PanelState
             tone="loading"
@@ -27,8 +37,8 @@ export function SpikeAlertsPanel({ region, isLoading = false }: SpikeAlertsPanel
             compact
           />
         ) : null}
-        {region?.spikes.length ? (
-          region.spikes.map((spike) => (
+        {activeView?.spikes.length ? (
+          activeView.spikes.map((spike) => (
             <div key={spike.id} className="rounded-2xl border border-amber/20 bg-amber/10 px-4 py-4 shadow-spike">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 text-amber-200">
@@ -47,7 +57,7 @@ export function SpikeAlertsPanel({ region, isLoading = false }: SpikeAlertsPanel
             </div>
           ))
         ) : (
-          <PanelState title="Alert board clear" body="No active spike alerts for the selected region." />
+          <PanelState title={`Alert board clear for ${viewLabel.toLowerCase()}`} body="No active spike alerts are visible in the current source lens." />
         )}
       </div>
     </SectionCard>

@@ -8,6 +8,8 @@ export type SourceCount = {
   count: number;
 };
 
+export type SourceViewKey = "overview" | "wikipedia" | "reddit" | "hackernews" | "github" | "gdelt";
+
 export type NormalizedEvent = {
   id: string;
   source: string;
@@ -120,6 +122,25 @@ export type RegionInsight = {
   feed: RegionEvent[];
   contributions: RegionContribution[];
   trend: TrendPoint[];
+  sourceViews: Record<SourceViewKey, RegionSourceView>;
+};
+
+export type RegionSourceView = {
+  key: SourceViewKey;
+  label: string;
+  narrative: string;
+  score: number;
+  activity: number;
+  topTopics: RegionTopic[];
+  spikes: RegionSpike[];
+  feed: RegionEvent[];
+  contributions: RegionContribution[];
+  trend: TrendPoint[];
+  dominantSource: string;
+  hotspotLabel: string;
+  spikePressure: number;
+  topicDiversity: number;
+  hasSignal: boolean;
 };
 
 export type DashboardState = {

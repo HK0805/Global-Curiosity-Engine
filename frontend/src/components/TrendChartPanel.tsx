@@ -2,16 +2,26 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YA
 import { formatScore } from "../lib/format";
 import { PanelState } from "./PanelState";
 import { SectionCard } from "./SectionCard";
-import type { RegionInsight } from "../types";
+import type { RegionInsight, RegionSourceView, SourceViewKey } from "../types";
 
 type TrendChartPanelProps = {
   region: RegionInsight | null;
+  view?: RegionSourceView | null;
+  selectedSourceView?: SourceViewKey;
   isLoading?: boolean;
   className?: string;
 };
 
-export function TrendChartPanel({ region, isLoading = false, className = "" }: TrendChartPanelProps) {
-  const hasTrend = Boolean(region?.trend.length);
+export function TrendChartPanel({
+  region,
+  view,
+  selectedSourceView = "overview",
+  isLoading = false,
+  className = "",
+}: TrendChartPanelProps) {
+  const activeView = view ?? region?.sourceViews.overview ?? null;
+  const hasTrend = Boolean(activeView?.trend.length);
+  const viewLabel = selectedSourceView === "overview" ? "All signals" : activeView?.label ?? "Selected source";
 
   return (
     <SectionCard title="Curiosity Trend" eyebrow="Regional Momentum" tone="violet" className={`h-full ${className}`}>
@@ -22,15 +32,15 @@ export function TrendChartPanel({ region, isLoading = false, className = "" }: T
           body="Composing the current curiosity pulse for the selected region."
         />
       ) : hasTrend ? (
-        <>
+        <div data-panel-source={selectedSourceView} data-panel-kind="trend-chart">
           <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3 text-sm text-slate-300">
-            <span>{region?.region.label} trajectory anchored by {region?.hotspotLabel}</span>
+            <span>{region?.region.label} trajectory anchored by {activeView?.hotspotLabel}</span>
             <span className="rounded-full border border-violet/20 bg-violet/10 px-3 py-1 text-xs uppercase tracking-[0.18em] text-violet-200">
-              {region?.dominantSource}
+              {viewLabel}
             </span>
           </div>
           <div className="mb-4 grid grid-cols-3 gap-3">
-            {region!.trend.slice(-3).map((point) => (
+            {activeView!.trend.slice(-3).map((point) => (
               <div key={point.label} className="rounded-2xl border border-white/8 bg-white/[0.03] px-3 py-3">
                 <p className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-500">{point.label}</p>
                 <p className="mt-2 font-display text-lg font-semibold text-white">{formatScore(point.value)}</p>
@@ -39,7 +49,7 @@ export function TrendChartPanel({ region, isLoading = false, className = "" }: T
           </div>
           <div className="h-[240px]">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={region?.trend ?? []} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              <AreaChart data={activeView?.trend ?? []} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="trendFill" x1="0" x2="0" y1="0" y2="1">
                     <stop offset="0%" stopColor="#38bdf8" stopOpacity={0.65} />
@@ -70,9 +80,9 @@ export function TrendChartPanel({ region, isLoading = false, className = "" }: T
               </AreaChart>
             </ResponsiveContainer>
           </div>
-        </>
+        </div>
       ) : (
-        <PanelState title="Trend line unavailable" body="There is not enough recent signal to draw momentum for this region." />
+        <PanelState title={`Trend line unavailable for ${viewLabel.toLowerCase()}`} body="There is not enough recent signal to draw momentum in the current source lens." />
       )}
     </SectionCard>
   );
