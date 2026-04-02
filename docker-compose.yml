@@ -33,19 +33,9 @@ services:
     container_name: gce-kafka-init
     depends_on:
       - kafka
-    entrypoint: ["/bin/sh", "-c"]
-    command: >
-      cub kafka-ready -b kafka:29092 1 30 &&
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic raw.wikipedia.edits --partitions 1 --replication-factor 1 &&
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic raw.reddit.posts --partitions 1 --replication-factor 1 &&
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic raw.hn.stories --partitions 1 --replication-factor 1 &&
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic raw.github.events --partitions 1 --replication-factor 1 &&
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic raw.gdelt.events --partitions 1 --replication-factor 1 &&
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic normalized.events --partitions 1 --replication-factor 1 &&
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic topics.extracted --partitions 1 --replication-factor 1 &&
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic topics.metrics --partitions 1 --replication-factor 1 &&
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic topics.scored --partitions 1 --replication-factor 1 &&
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic topics.spikes --partitions 1 --replication-factor 1
+    entrypoint: ["/bin/sh", "/scripts/kafka-init.sh"]
+    volumes:
+      - ./scripts:/scripts:ro
     restart: "no"
 
   wiki-producer:
@@ -150,7 +140,7 @@ services:
       kafka-init:
         condition: service_completed_successfully
     volumes:
-      - ./database:/data
+      - sqlite-data:/data
     restart: unless-stopped
 
   topic-extractor:
@@ -187,7 +177,7 @@ services:
       kafka-init:
         condition: service_completed_successfully
     volumes:
-      - ./database:/data
+      - sqlite-data:/data
     restart: unless-stopped
 
   curiosity-scorer:
@@ -207,7 +197,7 @@ services:
       kafka-init:
         condition: service_completed_successfully
     volumes:
-      - ./database:/data
+      - sqlite-data:/data
     restart: unless-stopped
 
   spike-detector:
@@ -227,7 +217,7 @@ services:
       kafka-init:
         condition: service_completed_successfully
     volumes:
-      - ./database:/data
+      - sqlite-data:/data
     restart: unless-stopped
 
   api-server:
@@ -245,7 +235,10 @@ services:
     depends_on:
       - kafka-init
     volumes:
-      - ./database:/data
+      - sqlite-data:/data
     ports:
       - "${API_PORT:-8080}:${API_PORT:-8080}"
     restart: unless-stopped
+
+volumes:
+  sqlite-data:

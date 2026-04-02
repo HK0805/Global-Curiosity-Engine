@@ -8,13 +8,15 @@ import { LiveFeedPanel } from "./components/LiveFeedPanel";
 import { SpikeAlertsPanel } from "./components/SpikeAlertsPanel";
 import { TrendChartPanel } from "./components/TrendChartPanel";
 import { SkeletonBlock } from "./components/PanelState";
-import type { DashboardState } from "./types";
+import { SourceViewTabs } from "./components/SourceViewTabs";
+import type { DashboardState, SourceViewKey } from "./types";
 
 const GlobeHero = lazy(async () => import("./components/GlobeHero").then((module) => ({ default: module.GlobeHero })));
 
 export default function App() {
   const [dashboard, setDashboard] = useState<DashboardState | null>(null);
   const [selectedRegionID, setSelectedRegionID] = useState<string | null>(REGION_DEFINITIONS[0]?.id ?? null);
+  const [selectedSourceView, setSelectedSourceView] = useState<SourceViewKey>("overview");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -36,6 +38,7 @@ export default function App() {
         }
         setDashboard(state);
         setSelectedRegionID((current) => current ?? state.regions[0]?.region.id ?? null);
+        setSelectedSourceView((current) => current);
         setErrorMessage(null);
       } catch (error) {
         if (canceled) {
@@ -64,6 +67,7 @@ export default function App() {
 
   const selectedRegion =
     dashboard?.regions.find((item) => item.region.id === selectedRegionID) ?? dashboard?.regions[0] ?? null;
+  const selectedRegionView = selectedRegion?.sourceViews[selectedSourceView] ?? null;
   const isOfflineWithoutSnapshot = Boolean(errorMessage && !dashboard);
 
   return (
@@ -76,7 +80,7 @@ export default function App() {
         <HeaderBar
           curiosityIndex={dashboard?.curiosityIndex?.curiosity_index ?? null}
           selectedRegionLabel={selectedRegion?.region.label ?? "Global"}
-          serviceStatus={dashboard?.serviceStatus ?? "loading"}
+          serviceStatus={dashboard?.serviceStatus ?? (errorMessage ? "offline" : "loading")}
           lastUpdated={dashboard?.lastUpdated ?? null}
           isRefreshing={isRefreshing}
         />
@@ -120,7 +124,28 @@ export default function App() {
               isLoading={isInitialLoading}
             />
           </Suspense>
-          <RegionPanel region={selectedRegion} isLoading={isInitialLoading} />
+          <RegionPanel
+            region={selectedRegion}
+            view={selectedRegionView}
+            selectedSourceView={selectedSourceView}
+            isLoading={isInitialLoading}
+          />
+        </section>
+
+        <section className="rounded-[24px] border border-white/8 bg-panel px-4 py-4 shadow-panel">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-[0.68rem] uppercase tracking-[0.24em] text-cyan/60">Region Signal Lens</p>
+              <p className="mt-2 text-sm text-slate-300">
+                Switch between the full regional picture and source-specific views to see which forum is actually driving the story.
+              </p>
+            </div>
+            <SourceViewTabs
+              region={selectedRegion}
+              selectedSourceView={selectedSourceView}
+              onChange={setSelectedSourceView}
+            />
+          </div>
         </section>
 
         <section className="grid gap-5 lg:grid-cols-2 2xl:grid-cols-[1.02fr_0.94fr_1.1fr]">
@@ -132,9 +157,25 @@ export default function App() {
             </>
           ) : (
             <>
-              <LiveFeedPanel region={selectedRegion} isLoading={isInitialLoading} />
-              <SpikeAlertsPanel region={selectedRegion} isLoading={isInitialLoading} />
-              <TrendChartPanel region={selectedRegion} isLoading={isInitialLoading} className="lg:col-span-2 2xl:col-span-1" />
+              <LiveFeedPanel
+                region={selectedRegion}
+                view={selectedRegionView}
+                selectedSourceView={selectedSourceView}
+                isLoading={isInitialLoading}
+              />
+              <SpikeAlertsPanel
+                region={selectedRegion}
+                view={selectedRegionView}
+                selectedSourceView={selectedSourceView}
+                isLoading={isInitialLoading}
+              />
+              <TrendChartPanel
+                region={selectedRegion}
+                view={selectedRegionView}
+                selectedSourceView={selectedSourceView}
+                isLoading={isInitialLoading}
+                className="lg:col-span-2 2xl:col-span-1"
+              />
             </>
           )}
         </section>

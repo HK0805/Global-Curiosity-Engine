@@ -16,6 +16,25 @@ export function HeaderBar({
   lastUpdated,
   isRefreshing,
 }: HeaderBarProps) {
+  const normalizedStatus = serviceStatus.toLowerCase();
+  const isLive = normalizedStatus === "ok";
+  const statusLabel =
+    normalizedStatus === "ok"
+      ? "Live"
+      : normalizedStatus === "offline"
+        ? "Offline"
+        : normalizedStatus === "loading"
+          ? "Syncing"
+          : serviceStatus;
+  const statusDetail =
+    normalizedStatus === "ok"
+      ? isRefreshing
+        ? "Syncing stream"
+        : "Healthy"
+      : normalizedStatus === "offline"
+        ? "Backend unavailable"
+        : "Awaiting feed";
+
   return (
     <header className="surface-sheen relative overflow-hidden rounded-[30px] border border-cyan/15 bg-panel px-5 py-5 shadow-panel backdrop-blur-xl sm:px-6">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_10%_10%,rgba(56,189,248,0.14),transparent_24%),radial-gradient(circle_at_88%_18%,rgba(139,92,246,0.11),transparent_24%)]" />
@@ -32,8 +51,8 @@ export function HeaderBar({
           </div>
           <div className="flex flex-wrap items-center gap-3 text-xs uppercase tracking-[0.2em] text-slate-400">
             <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/12 bg-emerald-400/10 px-3 py-1 text-emerald-200">
-              <span className={`h-2 w-2 rounded-full bg-emerald-300 ${serviceStatus === "ok" ? "animate-pulse-glow" : ""}`} />
-              {serviceStatus === "ok" ? "Realtime backend online" : serviceStatus}
+              <span className={`h-2 w-2 rounded-full ${isLive ? "bg-emerald-300 animate-pulse-glow" : normalizedStatus === "offline" ? "bg-amber-300" : "bg-slate-400"}`} />
+              {isLive ? "Realtime backend online" : statusLabel}
             </span>
             <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1">
               <Sparkle className="h-3.5 w-3.5 text-cyan" />
@@ -51,10 +70,10 @@ export function HeaderBar({
         <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
           <StatPill
             label="Status"
-            value={serviceStatus === "ok" ? "Live" : serviceStatus}
-            accent="text-emerald-300"
+            value={statusLabel}
+            accent={isLive ? "text-emerald-300" : normalizedStatus === "offline" ? "text-amber-200" : "text-slate-200"}
             icon={<Dot className="h-5 w-5" />}
-            detail={isRefreshing ? "Syncing stream" : "Healthy"}
+            detail={statusDetail}
           />
           <StatPill
             label="Curiosity Index"

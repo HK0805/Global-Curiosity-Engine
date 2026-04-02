@@ -1,8 +1,11 @@
 package config
 
 import (
+	"bufio"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 )
 
 type Config struct {
@@ -13,7 +16,11 @@ type Config struct {
 	RedditUserAgent string
 }
 
+var loadEnvOnce sync.Once
+
 func Load() Config {
+	loadEnvOnce.Do(loadDotEnv)
+
 	return Config{
 		KafkaBroker:     getEnv("KAFKA_BROKER", "kafka:29092"),
 		SQLitePath:      getEnv("SQLITE_PATH", "/data/global-curiosity-engine.db"),
@@ -30,4 +37,39 @@ func getEnv(key, fallback string) string {
 	}
 
 	return value
+}
+
+func loadDotEnv() {
+	path := filepath.Join(".", ".env")
+	file, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+
+		if _, exists := os.LookupEnv(key); exists {
+			continue
+		}
+
+		value = strings.TrimSpace(value)
+		value = strings.Trim(value, `"'`)
+		_ = os.Setenv(key, value)
+	}
 }

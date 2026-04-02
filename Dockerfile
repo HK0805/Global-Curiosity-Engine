@@ -16,8 +16,12 @@ FROM alpine:3.21
 
 ARG BINARY_NAME
 
-RUN adduser -D -u 10001 appuser
 WORKDIR /app
+
+RUN adduser -D -u 10001 appuser \
+    && mkdir -p /app \
+    && mkdir -p /data \
+    && chown -R appuser:appuser /app /data
 
 COPY --from=builder /out/${BINARY_NAME} /app/service
 
